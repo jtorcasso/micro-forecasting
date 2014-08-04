@@ -2,6 +2,7 @@ import os
 from pystata import _retrieve_data
 import numpy as np
 from scipy.stats import multivariate_normal as mvnorm
+import numba
 
 cnlsy = _retrieve_data(os.path.join(os.environ['erc'], 'data', 'cnlsy-base-data', 'CNLSY_Data.dta'))['data']
 
@@ -17,6 +18,7 @@ cnlsy = _retrieve_data(os.path.join(os.environ['erc'], 'data', 'cnlsy-base-data'
 # bpi13            Impulsive, or acts without thinking
 # bpi17            Restless, overly active, cannot sit still
 
+@numba.jit
 def packpars(params):
 	'''packs params into matrices'''
 
@@ -31,47 +33,7 @@ def packpars(params):
 
 	return V, C, A, W
 
-params0 = np.array([0., 0, -1, -1, -1, -1, 1, .3, .3, 1, 0, 0, 0, 0, 0, 0])
-
-def filter_step(params, state, var, measure):
-	'''predict and update steps, calculate likelihood
-
-	Parameters 
-	----------
-	params : array
-		parameter values
-	state : array
-		current state (K x 1)
-	var : array
-		current variance (K x K)
-	measure : array
-		measurements of next state (M x 1, where M > K)
-
-	Notes
-	-----
-	K is the number of state variables
-	M is the number of measurements (of those state variables)
-	'''
-
-	# V(K x K), C(M x K), A(K x K), W(M x M)
-	V, C, A, W = packpars(params)
-
-	# Prediction Step
-	pstate = A.dot(state)  # (K x 1)
-	pstate_var = A.dot(var).dot(A.T) + V  # (K x K)
-	pmeasure = C.dot(pstate)  # (M x 1)
-	pmeasure_var = C.dot(pstate_var).dot(C.T) + W  # (M x M)
-
-	# Update Step
-	kalman_gain = pstate_var.dot(C.T).dot(np.linalg.pinv(pmeasure_var)) # (K x M)
-	state = pstate + kalman_gain.dot(measure - pmeasure)  # (K x 1)
-	var = pstate_var - kalman_gain.dot(pstate_var.dot(C.T).T)  # (K x K)
-
-	# Step Likelihood
-	llf = mvnorm.logpdf(measure.flat, mean=pmeasure.flat, cov=pmeasure_var)
-
-	return state, var, llf
-
+@numba.jit
 def filter_path(params, state, var, data):
 	'''compute log-likelihood for an individual across time
 
@@ -103,14 +65,29 @@ def filter_path(params, state, var, data):
 
 	'''
 
+	# V(K x K), C(M x K), A(K x K), W(M x M)
+	V, C, A, W = packpars(params)
+
 	llf = mvnorm.logpdf(data[0], mean=np.zeros(data[0].shape[0]), 
 		cov=np.ones(data[0].shape[0]))
 
 	for t in data.index.levels[0][1:]:
 
-		state, var, llf_ = filter_step(params, state, var, data[t].reshape((-1, 1)))
+		measure = data[t].reshape((-1, 1))
 
-		llf += llf_
+		# Prediction Step
+		pstate = A.dot(state)  # (K x 1)
+		pstate_var = A.dot(var).dot(A.T) + V  # (K x K)
+		pmeasure = C.dot(pstate)  # (M x 1)
+		pmeasure_var = C.dot(pstate_var).dot(C.T) + W  # (M x M)
+
+		# Update Step
+		kalman_gain = pstate_var.dot(C.T).dot(np.linalg.pinv(pmeasure_var)) # (K x M)
+		state = pstate + kalman_gain.dot(measure - pmeasure)  # (K x 1)
+		var = pstate_var - kalman_gain.dot(pstate_var.dot(C.T).T)  # (K x K)
+
+		# Step Likelihood
+		llf += mvnorm.logpdf(measure.flat, mean=pmeasure.flat, cov=pmeasure_var)
 
 	return llf
 
@@ -140,6 +117,7 @@ def filter_sample(params, state, var, data):
 		print -llf
 		return -llf
 	except:
+		print "Invalid parameter region reached."
 		return np.inf
 
 def dgp(params, state, var):
@@ -169,8 +147,10 @@ def dgp(params, state, var):
 import pandas as pd
 import time
 np.random.seed(1234)
+
 state = np.array([[1.], [1.]])
 var = np.array([[1., 0.,], [0., 1.]])
+params0 = np.array([0., 0, -1, -1, -1, -1, 1, .3, .3, 1, 0, 0, 0, 0, 0, 0])
 data = dgp(params0, state, var)
 
 from scipy.optimize import minimize
