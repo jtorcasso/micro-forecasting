@@ -54,12 +54,6 @@ for i in xrange(6):
 
 p.summary()
 
-
-# Initial States
-state = np.array([[1.], [1.]])
-var = np.array([[1., 0.,], [0., 1.]])
-
-
 # Delinquency -- Ages 4(2)14
 # bpi4             Cheats or tells lies
 # bpi6             Argues too much
@@ -84,9 +78,14 @@ def wrap_filter(params, p, state, var, data):
 
     V, C, A, W = p['V'].value, p['C'].value, p['A'].value, p['W'].value
 
-    return filter_sample(V, C, A, W, state, var, data)
+    return pfilter_sample(V, C, A, W, state, var, data, 4)
 
+# Initialization
+
+state = np.array([[1.], [1.]])
+var = np.array([[1., 0.,], [0., 1.]])
 params0 = np.array([par.transform(direction='out') for par in p.params if par.isfree()])
+
 params = minimize(wrap_filter, x0=params0, 
     args=(p, state, var, data), method='Powell', tol=1e-3)
 
