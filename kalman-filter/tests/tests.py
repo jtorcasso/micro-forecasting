@@ -1,17 +1,40 @@
-from __future__ import division
-import os
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), '..')))
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
-from pystata import _retrieve_data
-from filtering import filter_sample, pfilter_sample
+import time
+print sys.path[0]
+from filtering import pfilter_sample, filter_sample
 from paras import ParameterSpace
 
-cnlsy = _retrieve_data(os.path.join(os.environ['erc'], 'data', 'cnlsy-base-data', 'CNLSY_Data.dta'))['data']
+def dgp(V, C, A, W, state, var):
+	N = 100
+	M = 6
+	T = 4
+	K = 2
+	data = np.zeros((N, M*T))
+
+	for row in data:
+		idata = np.ones(M*T)
+		state_ = np.random.multivariate_normal(mean=state.flat, cov=var).reshape((-1, 1))
+		idata[:M] = C.dot(state_).flat + np.random.multivariate_normal(mean=np.zeros(M), cov=W)
+		for t in xrange(1, T):
+			state_ = A.dot(state_) + np.random.multivariate_normal(mean=np.zeros(K), cov=V).reshape((-1, 1))
+			idata[M*t:M*(t+1)] = C.dot(state_).flat + np.random.multivariate_normal(mean=np.zeros(M), cov=W)
+		row[:] = idata
+
+	data = pd.DataFrame(data)
+	data.columns = pd.MultiIndex.from_product([range(T), range(M)])
+
+	return data
+
 
 np.random.seed(1234)
 
-# Setting Up the Parameters
+state = np.array([[1.], [1.]])
+var = np.array([[1., 0.,], [0., 1.]])
+
 p = ParameterSpace()
 V = np.array([[1., 0.],
               [0., 1.]])
@@ -52,42 +75,22 @@ p['W'].set_free([[True,  False, False, False, False, False],
 for i in xrange(6):
     p['W'][i,i].set_bounds(0, np.inf)
 
+V, C, A, W = p['V'], p['C'], p['A'], p['W']
+
+data = dgp(V.value, C.value, A.value, W.value, state, var)
+
+params0 = np.array([par.transform(par.value, direction='out')+np.random.randn() for par in p.params if par.isfree()])
 p.summary()
-
-
-# Initial States
-state = np.array([[1.], [1.]])
-var = np.array([[1., 0.,], [0., 1.]])
-
-
-# Delinquency -- Ages 4(2)14
-# bpi4             Cheats or tells lies
-# bpi6             Argues too much
-# bpi9             Bullies, or is cruel/mean to others
-
-# Focus -- Ages 4(2)14
-# bpi7             Difficult concentrating
-# bpi13            Impulsive, or acts without thinking
-# bpi17            Restless, overly active, cannot sit still
-
-data = cnlsy[['{}age{}'.format(s, a) for s in ['bpi4', 'bpi6', 'bpi9', 'bpi7', 'bpi13', 'bpi17'] for a in xrange(2, 15, 2)]]
-data = data.ix[(data.count(axis=1)/data.shape[1]) >= .85, :]
-data = data.fillna(data.mean())
-
-data.columns = pd.MultiIndex.from_product([range(0, 13, 2), ['bpi4', 'bpi6', 'bpi9', 'bpi7', 'bpi13', 'bpi17']])
-
-from scipy.optimize import minimize
-
 def wrap_filter(params, p, state, var, data):
+	
+	p.update(params)
 
-    p.update(params)
+	V, C, A, W = p['V'].value, p['C'].value, p['A'].value, p['W'].value
 
-    V, C, A, W = p['V'].value, p['C'].value, p['A'].value, p['W'].value
+	return filter_sample(V, C, A, W, state, var, data)
 
-    return filter_sample(V, C, A, W, state, var, data)
-
-params0 = np.array([par.transform(direction='out') for par in p.params if par.isfree()])
-params = minimize(wrap_filter, x0=params0, 
-    args=(p, state, var, data), method='Powell', tol=1e-3)
-
+start = time.time()
+params = minimize(wrap_filter, x0=params0+np.random.randn(len(params0)), 
+                  args=(p, state, var, data), method='Powell', tol=1e-2)
+print 'Finished in {} seconds'.format(time.time() - start)
 p.summary()
