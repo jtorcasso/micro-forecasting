@@ -135,21 +135,14 @@ def pfilter_sample(V, C, A, W, state, var, data, threads=4):
 		log-likelihood contribution for the sample
 	'''
 
-	try:
-		pool = Pool(threads)
+	pool = Pool(threads)
 
-		llf = sum(pool.map(functools.partial(filter_path, V, C, A, W, state, var, data), 
-			xrange(len(data))))
+	llf = sum(pool.map(functools.partial(filter_path, V, C, A, W, state, var, data), 
+		xrange(len(data))))
 
-		pool.close()
-		pool.join()
+	pool.close()
+	pool.join()
 
-		print -llf
+	print -llf
 
-		return -llf
-
-	except:
-
-		print traceback.format_exc()
-		print "Error: returning very large number"
-		return np.inf
+	return -llf

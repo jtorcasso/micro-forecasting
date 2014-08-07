@@ -1,5 +1,5 @@
 from __future__ import division
-import os
+import os, sys
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
@@ -72,6 +72,54 @@ data.columns = pd.MultiIndex.from_product([range(0, 13, 2), ['bpi4', 'bpi6', 'bp
 
 from scipy.optimize import minimize
 
+class Minimizer(object):
+    '''interactive wrapper for scipy.optimize.minimize'''
+
+    def __init__(self, func, x0, **kwargs):
+        self.func = func
+        self.params = x0
+        self.callback_kwarg = kwargs.pop('callback', None)
+        self.kwargs = kwargs
+        self.results = None
+
+    def run(self):
+        '''Run the optimizer given the current parameter values'''
+
+        try:
+            self.results = minimize(self.func, x0=self.params, 
+                callback=self.callback, **self.kwargs)
+        except KeyboardInterrupt:
+            pass
+
+    def callback(self, params):
+        '''record parameters after each optimizer iteration
+
+        Parameters
+        ----------
+        params : array
+            current parameter values
+        '''
+
+        self.params = params
+
+        if self.callback_kwarg is not None: self.callback_kwarg(params)
+
+    def fval(self):
+        '''evaluate function at the current parameter value'''
+
+        return self.func(self.params, *self.kwargs.get('args', ()))
+
+    def perturb(self, epsilon):
+        '''perturb current parameter value by epsilon
+
+        Parameters
+        ----------
+        epsilon : array or scalar
+            array or scalar to perturb parameters
+        '''
+
+        self.params += epsilon
+
 def wrap_filter(params, p, state, var, data):
 
     p.update(params)
@@ -86,7 +134,10 @@ state = np.array([[1.], [1.]])
 var = np.array([[1., 0.,], [0., 1.]])
 params0 = np.array([par.transform(direction='out') for par in p.params if par.isfree()])
 
-params = minimize(wrap_filter, x0=params0, 
-    args=(p, state, var, data), method='Powell', tol=1e-3)
+# params = minimize(wrap_filter, x0=params0, 
+#     args=(p, state, var, data), method='Powell', tol=1e-3)
+m = Minimizer(wrap_filter, x0=params0, args=(p, state, var, data), 
+    method='Powell', tol=1e-3)
+m.run()
 
 p.summary()
