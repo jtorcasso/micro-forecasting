@@ -132,12 +132,10 @@ def wrap_filter(params, p, state, var, data):
 
 state = np.array([[1.], [1.]])
 var = np.array([[1., 0.,], [0., 1.]])
-params0 = np.array([par.transform(direction='out') for par in p.params if par.isfree()])
+params0 = np.array([par.value_ for par in p.params if par.free])
 
 # params = minimize(wrap_filter, x0=params0, 
 #     args=(p, state, var, data), method='Powell', tol=1e-3)
 m = Minimizer(wrap_filter, x0=params0, args=(p, state, var, data), 
     method='Powell', tol=1e-3)
 m.run()
-
-p.summary()

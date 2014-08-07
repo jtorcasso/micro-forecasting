@@ -17,23 +17,10 @@ class ParameterBase(object):
     '''
     
     def __init__(self, value, name):
-        self.name = self.set_name(name)
-        self.value = value
-    
-    def set_name(self, name):
-        '''sets name of parameter
-        
-        Parameters
-        ----------
-        name : str
-            name of parameter
-        '''
-        if not isinstance(name, str):
-            raise ValueError('name must be a str')
-        
         self.name = name
-        return name
-        
+        self.value = value
+        self.value_ = value
+    
     def set_bounds(self):
         '''sets bounds of parameter'''
         raise NotImplementedError
@@ -49,13 +36,23 @@ class ParameterBase(object):
     def __str__(self):
         return self.value.__str__()
 
+    def __repr__(self):
+        return self.value.__repr__()
+
 class ParameterContainer(object):
     '''class to contain parameters'''
     
     def __init__(self, scalars):
         self.scalars = scalars
-        self.value = np.resize([p.value for p in self.scalars.flat], self.scalars.shape)
-            
+
+    @property
+    def value(self):
+        return np.resize([p.value for p in self.scalars.flat], self.scalars.shape)
+    
+    @property
+    def value_(self):
+        return np.resize([p.value_ for p in self.scalars.flat], self.scalars.shape)
+
     def set_bounds(self, min_, max_):
         '''sets bounds of parameter
         
@@ -72,6 +69,7 @@ class ParameterContainer(object):
         for i,param in enumerate(self.scalars.flat):
             param.set_bounds(min_[i], max_[i])
 
+
     def set_free(self, bool_like):
         '''sets value of free parameter
         
@@ -86,18 +84,16 @@ class ParameterContainer(object):
         for i,param in enumerate(self.scalars.flatten()):
             param.set_free(bool_like[i])
 
-    def update(self, values, transform=True):
+    def update(self, values, source='external'):
 
         values = np.resize(values, self.scalars.size)
 
         for param, val in zip(self.scalars.flatten(), values):
-            param.update(val, transform)
-
-        self.value = np.resize([p.value for p in self.scalars.flat], self.scalars.shape)
+            param.update(val, source)
 
     def summary(self):
         bounds = np.resize([str(p.bounds) for p in self.scalars.flat], self.scalars.shape)
-        free = np.resize([p.isfree() for p in self.scalars.flat] , self.scalars.shape)
+        free = np.resize([p.free for p in self.scalars.flat] , self.scalars.shape)
 
         string = '{}\n{}\n'.format('Value:', self.value.__str__())
         string += '{}\n{}\n'.format('Bounds:', bounds.__str__())
@@ -123,9 +119,9 @@ class ParameterScalar(ParameterBase):
     
     def __init__(self, value, name):
         ParameterBase.__init__(self, value, name)
-        self.bounds = (-np.inf, np.inf)
+        self.set_bounds(-np.inf, np.inf)
         self.free = True
-    
+
     def set_bounds(self, min_, max_):
         '''set bounds of parameter
         
@@ -140,6 +136,21 @@ class ParameterScalar(ParameterBase):
             raise ValueError('Bounds conflict with parameter values')
 
         self.bounds = (min_, max_)
+
+        if (not np.isfinite(min_)) & (not np.isfinite(max_)):
+            self.to_internal = lambda val: val
+            self.to_external = lambda val: val
+        elif np.isfinite(min_):
+            self.to_external = lambda val: np.sqrt((val - min_ + 1)**2 - 1)
+            self.to_internal = lambda val: min_ - 1 + np.sqrt(val**2 + 1)
+        elif np.isfinite(max_):
+            self.to_external = lambda val: np.sqrt((max_ - val + 1)**2 - 1)
+            self.to_internal = lambda val: max_ + 1 - np.sqrt(val**2 + 1)
+        else:
+            self.to_external = lambda val: np.arcsin(2*(val - min_)/(max_ - min_) - 1)
+            self.to_internal = lambda val: min_ + (np.sin(val) + 1)*(max_ - min_)/2
+
+        self.value_ = self.to_external(self.value)
     
     def set_free(self, free):
         '''set the parameter as free
@@ -151,76 +162,28 @@ class ParameterScalar(ParameterBase):
         '''
         
         self.free = bool(free)
-    
-    def isfree(self):
-        '''checks if parameter is free'''
-        return self.free
-    
-    def transform(self, value=None, direction='out'):
-        '''transforms parameter value to comply with
-        bounds
 
-        Parameters
-        ----------
-        value : numeric or None
-            If None, assumes current parameter value. Else
-            takes a numeric type
-        direction : str
-            Direction of transform. 'out' to go from internal
-            (i.e. the bounded value) and go to the external 
-            (i.e. unbounded); 'in' to go from external to 
-            internal
-
-        Returns 
-        -------
-        tvalue : numeric
-            transformed value
-        '''
-        min_ = self.bounds[0]
-        max_ = self.bounds[1]
-        value = self.value if value is None else value
-        
-        if (not np.isfinite(min_)) & (not np.isfinite(max_)):
-            return value
-
-        if direction == 'out':
-
-
-            if np.isfinite(min_):
-                return np.sqrt((value - min_ + 1)**2 - 1)
-            elif np.isfinite(max_):
-                return np.sqrt((max_ - value + 1)**2 - 1)
-            else:
-                return np.arcsin(2*(value - min_)/(max_ - min_) - 1)
-        elif direction == 'in':
-
-            if np.isfinite(min_):
-                value = min_ - 1 + np.sqrt(value**2 + 1)
-            elif np.isfinite(max_):
-                value = max_ + 1 - np.sqrt(value**2 + 1)
-            else:
-                value = min_ + (np.sin(value) + 1)*(max_ - min_)/2
-
-            return value
-        else:
-            raise ValueError('direction takes "in" or "out" as argument')
-
-
-    def update(self, value, transform=True):
+    def update(self, value, source='external'):
         '''updates value of parameter
         
         Parameters
         ----------
         value : numeric type
             value to update with
+        source : str
+            'external' to update with an unconstrained value,
+            'internal' to update with a constrained value
         '''
 
-        assert self.isfree()
+        assert self.free
+        assert source in ['external', 'internal']
 
-        if transform:
-            self.value = self.transform(value=value, direction='in')
+        if source == 'external':
+            self.value = self.to_internal(value)
+            self.value_ = value
         else:
             self.value = value
+            self.value_ = self.to_external(value)
             
     def summary(self):
         '''print summary of the parameter'''
@@ -271,7 +234,7 @@ class ParameterSpace(object):
             raise ValueError('parameter value of unsupported type')
         
     
-    def update(self, values, transform=True):
+    def update(self, values, source='external'):
         '''updates free parameters with the new values
         
         Parameters
@@ -279,12 +242,16 @@ class ParameterSpace(object):
         values: array
             1-d array of values to update the free parameters. Must
             be in order parameters were inserted.
+        source : str
+            'external' to update with an unconstrained value,
+            'internal' to update with a constrained value
         '''
-        free = [i for i,p in enumerate(self.params) if p.isfree()]
+
+        free = [i for i,p in enumerate(self.params) if p.free]
         assert values.shape == self.params[free].shape
         
         for v,p in zip(values, self.params[free]):
-            p.update(v, transform)        
+            p.update(v, source)        
                 
     def __getitem__(self, name):
         start, shape = self.ids[name]
@@ -321,7 +288,7 @@ if __name__ == '__main__':
         print(p)
         return np.square(y - p['b'].value*x).sum()
 
-    init = p['b'].transform(1000, direction='out')
+    init = p['b'].value_
 
     fmin = fmin_bfgs(squares, x0=init, args=(p,y,x))
 
