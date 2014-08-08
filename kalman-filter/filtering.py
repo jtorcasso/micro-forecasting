@@ -1,4 +1,3 @@
-import traceback
 import numpy as np
 from scipy.stats import multivariate_normal as mvnorm
 
@@ -94,19 +93,9 @@ def filter_sample(V, C, A, W, state, var, data):
 		log-likelihood contribution for the sample
 	'''
 
-	try:
+	llf = sum((filter_path(V, C, A, W, state, var, data, i) for i in xrange(len(data))))
 
-		llf = sum((filter_path(V, C, A, W, state, var, data, i) for i in xrange(len(data))))
-
-		print -llf
-
-		return -llf
-
-	except:
-
-		print traceback.format_exc()
-		print "Error: returning very large number"
-		return np.inf
+	return -llf
 
 def pfilter_sample(V, C, A, W, state, var, data, threads=4):
 	'''sample likelihood for kalman filter
@@ -142,7 +131,5 @@ def pfilter_sample(V, C, A, W, state, var, data, threads=4):
 
 	pool.close()
 	pool.join()
-
-	print -llf
 
 	return -llf
